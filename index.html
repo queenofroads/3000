@@ -56,6 +56,57 @@
   #btnL { left: 4%; }
   #btnR { left: calc(4% + 88px); }
   #btnJ { right: 4%; width: 92px; height: 92px; font-size: 15px; letter-spacing: 1px; }
+  /* ============ Name entry overlay ============ */
+  #nameUI {
+    position: fixed; inset: 0;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(10, 10, 15, 0.78);
+    backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+    z-index: 20;
+  }
+  #nameUI.show { display: flex; }
+  .card {
+    background: linear-gradient(160deg, #16121f, #0d0d16);
+    border: 2px solid var(--pink);
+    border-radius: 20px;
+    padding: 36px 42px;
+    text-align: center;
+    box-shadow: 0 0 45px rgba(255,45,120,.4), 0 0 140px rgba(255,45,120,.12);
+    max-width: 90vw;
+  }
+  .card h2 { color: var(--white); font-size: 26px; letter-spacing: 3px; margin-bottom: 8px; }
+  .card p { color: rgba(255,255,255,.55); font-family: Arial, sans-serif; font-weight: 700; font-size: 12px; margin-bottom: 20px; }
+  #nameInput {
+    width: 250px; max-width: 70vw;
+    padding: 13px 16px;
+    font-family: inherit; font-size: 19px; font-weight: 900;
+    text-align: center; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--white); background: #0a0a0f;
+    border: 2px solid rgba(255,45,120,.5); border-radius: 12px;
+    outline: none;
+  }
+  #nameInput:focus { border-color: var(--pink); box-shadow: 0 0 20px rgba(255,45,120,.5); }
+  #nameGo {
+    margin-top: 18px; width: 100%;
+    padding: 14px 0;
+    font-family: inherit; font-size: 16px; font-weight: 900; letter-spacing: 2px;
+    color: var(--white);
+    background: linear-gradient(135deg, #ff2d78, #ff5c96);
+    border: none; border-radius: 12px; cursor: pointer;
+    box-shadow: 0 0 26px rgba(255,45,120,.55);
+  }
+  #nameGo:active { transform: scale(.97); }
+  #editName {
+    position: fixed; top: 12px; right: 14px; z-index: 15;
+    display: none;
+    padding: 9px 16px;
+    font-family: inherit; font-size: 12px; font-weight: 900; letter-spacing: 1px;
+    color: var(--white);
+    background: rgba(255,45,120,.14);
+    border: 1.5px solid rgba(255,45,120,.65); border-radius: 20px;
+    cursor: pointer;
+  }
+  #editName:active { background: rgba(255,45,120,.4); }
 </style>
 </head>
 <body>
@@ -65,6 +116,16 @@
   <div class="tbtn" id="btnR">▶</div>
   <div class="tbtn" id="btnJ">JUMP</div>
 </div>
+<div id="nameUI">
+  <div class="card">
+    <h2>WHO'S RUNNING?</h2>
+    <p>YOUR NAME GOES ON THE HALL OF FAME (SAVED ON THIS DEVICE)</p>
+    <input id="nameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off">
+    <br>
+    <button id="nameGo">START THE RUN ▶</button>
+  </div>
+</div>
+<button id="editName">✎ NAME</button>
 
 <script>
 "use strict";
@@ -160,6 +221,25 @@ function currentStreak() {
   return last === yesterday ? streak : 0;
 }
 
+/* ==================== Runner name + Hall of Fame ==================== */
+const LS_NAME  = "nordeep3000_name";
+const LS_BOARD = "nordeep3000_board";
+function getName() { return (localStorage.getItem(LS_NAME) || "").trim(); }
+function loadBoard() {
+  try {
+    const b = JSON.parse(localStorage.getItem(LS_BOARD) || "[]");
+    return Array.isArray(b) ? b : [];
+  } catch (e) { return []; }
+}
+// Record a finished run under the current name; keep the top 8 forever
+function recordRun(finalScore, won) {
+  if (finalScore <= 0) return;
+  const board = loadBoard();
+  board.push({ n: getName() || "RUNNER", s: finalScore, d: todayStr(), w: !!won });
+  board.sort((a, b) => b.s - a.s);
+  localStorage.setItem(LS_BOARD, JSON.stringify(board.slice(0, 8)));
+}
+
 /* ============================ Tiny sounds ============================ */
 // Minimal WebAudio blips, created lazily on first input. Press M to mute.
 let audioCtx = null, muted = false;
@@ -192,6 +272,7 @@ const input = { left: false, right: false, jumpHeld: false, jumpPressed: false }
 function pressJump() { input.jumpPressed = true; input.jumpHeld = true; }
 
 window.addEventListener("keydown", (e) => {
+  if (nameUIVisible) return; // typing a name: leave the keyboard alone
   if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," ","Spacebar"].includes(e.key)) e.preventDefault();
   if (e.repeat) return;
   switch (e.key) {
@@ -202,6 +283,7 @@ window.addEventListener("keydown", (e) => {
       if (state !== "playing") advanceState();
       break;
     case "m": case "M": muted = !muted; break;
+    case "n": case "N": if (state !== "playing") showNameUI(); break;
   }
 });
 window.addEventListener("keyup", (e) => {
@@ -224,6 +306,36 @@ bindTouch(document.getElementById("btnJ"), () => { pressJump(); if (state !== "p
 window.addEventListener("touchstart", () => {
   document.body.classList.add("touch");
 }, { once: true });
+
+// --- Name entry overlay ---
+const nameUI = document.getElementById("nameUI");
+const nameInput = document.getElementById("nameInput");
+let nameUIVisible = false;
+function showNameUI() {
+  nameInput.value = getName();
+  nameUI.classList.add("show");
+  nameUIVisible = true;
+  setTimeout(() => nameInput.focus(), 60);
+}
+function hideNameUI() {
+  nameUI.classList.remove("show");
+  nameUIVisible = false;
+  nameInput.blur();
+}
+function submitName() {
+  const v = nameInput.value.trim().toUpperCase().slice(0, 12);
+  if (!v) { nameInput.focus(); return; }
+  localStorage.setItem(LS_NAME, v);
+  hideNameUI();
+  advanceState();
+}
+document.getElementById("nameGo").addEventListener("click", submitName);
+nameInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") submitName();
+});
+const editBtn = document.getElementById("editName");
+editBtn.addEventListener("click", () => { if (state !== "playing") showNameUI(); });
 // Tapping the canvas starts/restarts (jump is on the button during play)
 canvas.addEventListener("touchstart", (e) => {
   e.preventDefault();
@@ -412,11 +524,12 @@ function orbArcOverGap(gapStart, gapW) {
 
 /* ========================= State transitions ========================= */
 function advanceState() {
-  if (state === "start" || state === "win" || state === "gameover") {
-    resetRun();
-    state = "playing";
-    input.jumpPressed = false; // don't jump on the same press that started the run
-  }
+  if (state !== "start" && state !== "win" && state !== "gameover") return;
+  if (nameUIVisible) return;
+  if (!getName()) { showNameUI(); return; } // first run: sign the Hall of Fame
+  resetRun();
+  state = "playing";
+  input.jumpPressed = false; // don't jump on the same press that started the run
 }
 
 function loseLife(reason) {
@@ -429,6 +542,7 @@ function loseLife(reason) {
     if (lives <= 0) {
       state = "gameover";
       if (score > bestShown) { saveBest(score); bestShown = score; }
+      recordRun(score, false);
       return;
     }
     player.inv = CONFIG.INVINCIBLE_TIME;
@@ -452,6 +566,7 @@ function winGame() {
   state = "win";
   sfx.win();
   if (score > bestShown) { saveBest(score); bestShown = score; }
+  recordRun(score, true);
   winStats = { score, streak: streakShown, best: bestShown };
   // Big pink/white confetti burst
   for (let i = 0; i < 160; i++) {
@@ -501,6 +616,12 @@ function overGround(px, w) {
 function update(dt) {
   elapsed += dt;
   if (state !== "playing") {
+    if (state === "start") {
+      // Attract mode: world drifts by, explorer jogs in place
+      camX += 42 * dt;
+      if (grounds[0]) grounds[0].x1 = Math.max(grounds[0].x1, camX + W + 500);
+      player.runPhase += dt * 12;
+    }
     // keep confetti + background alive on end screens
     updateConfetti(dt);
     updateParticles(dt);
@@ -654,21 +775,19 @@ function draw() {
   // Screen shake on hits
   if (shakeT > 0) ctx.translate(rand(-5, 5), rand(-5, 5));
 
-  // --- Sky ---
-  ctx.fillStyle = CONFIG.BG;
+  // --- Sky (deep navy fading to near-black) ---
+  ctx.fillStyle = skyGrad;
   ctx.fillRect(-10, -10, W + 20, H + 20);
   drawStars();
   drawAurora();
   drawMountains();
 
-  if (state === "playing" || state === "win" || state === "gameover") {
-    drawGround();
-    drawClouds();
-    drawOrbs();
-    drawEnemies();
-    if (state === "playing") drawPlayer();
-    drawParticles();
-  }
+  drawGround();
+  drawClouds();
+  drawOrbs();
+  drawEnemies();
+  if (state === "playing" || state === "start") drawPlayer();
+  drawParticles();
 
   // Pink milestone flash
   if (flashAlpha > 0) {
@@ -689,35 +808,50 @@ function draw() {
 }
 
 /* --- Background layers (parallax) --- */
-const stars = Array.from({ length: 70 }, () => ({
+const skyGrad = (() => {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#191434");
+  g.addColorStop(0.45, "#0e0d1a");
+  g.addColorStop(1, "#0a0a0f");
+  return g;
+})();
+const stars = Array.from({ length: 80 }, () => ({
   x: Math.random() * W, y: Math.random() * H * 0.7,
-  r: Math.random() * 1.6 + 0.4, tw: Math.random() * 6.28,
+  r: Math.random() * 1.7 + 0.4, tw: Math.random() * 6.28,
 }));
 function drawStars() {
   const off = (camX * 0.05) % W;
   for (const s of stars) {
     const x = (s.x - off + W) % W;
     const a = 0.35 + 0.35 * Math.sin(elapsed * 1.5 + s.tw);
+    if (s.r > 1.4) { // big stars get a soft halo
+      ctx.fillStyle = "rgba(255,255,255," + (a * 0.12).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(x, s.y, s.r * 4, 0, 6.28); ctx.fill();
+    }
     ctx.fillStyle = "rgba(255,255,255," + a.toFixed(2) + ")";
     ctx.beginPath(); ctx.arc(x, s.y, s.r, 0, 6.28); ctx.fill();
   }
 }
 function drawAurora() {
-  // Soft pink aurora ribbons
+  // Pink aurora ribbons with a bright core
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (let band = 0; band < 3; band++) {
-    ctx.beginPath();
-    const baseY = 70 + band * 38;
-    for (let x = 0; x <= W; x += 16) {
-      const y = baseY
-        + Math.sin(x * 0.008 + elapsed * 0.5 + band * 2) * 22
-        + Math.sin(x * 0.02 - elapsed * 0.3 + band) * 10;
-      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.lineWidth = 26 - band * 6;
-    ctx.strokeStyle = "rgba(255,45,120," + (0.05 + band * 0.015).toFixed(3) + ")";
-    ctx.stroke();
+    const baseY = 70 + band * 40;
+    const ribbon = (width, alpha) => {
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 16) {
+        const y = baseY
+          + Math.sin(x * 0.008 + elapsed * 0.5 + band * 2) * 24
+          + Math.sin(x * 0.02 - elapsed * 0.3 + band) * 11;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.lineWidth = width;
+      ctx.strokeStyle = "rgba(255,45,120," + alpha.toFixed(3) + ")";
+      ctx.stroke();
+    };
+    ribbon(30 - band * 6, 0.07 + band * 0.02);  // wide soft band
+    ribbon(7, 0.10 + band * 0.02);              // bright core
   }
   ctx.restore();
 }
@@ -861,9 +995,13 @@ function drawPlayer() {
   ctx.quadraticCurveTo(-14, -6 + wave, -24, -2 - wave);
   ctx.stroke();
 
-  // Body
+  // Body (soft pink glow makes the hero pop against the dark)
+  ctx.save();
+  ctx.shadowColor = "rgba(255,45,120,0.55)";
+  ctx.shadowBlur = 14;
   ctx.fillStyle = CONFIG.WHITE;
   roundRect(-p.w / 2, -p.h / 2, p.w, p.h - 8, 6); ctx.fill();
+  ctx.restore();
   // Hood
   ctx.fillStyle = CONFIG.PINK;
   roundRect(-p.w / 2, -p.h / 2, p.w, 10, 5); ctx.fill();
@@ -904,46 +1042,128 @@ function drawConfetti() {
   ctx.globalAlpha = 1;
 }
 
-/* --- UI --- */
-function drawHUD() {
-  // Score + goal
-  ctx.textAlign = "left";
-  ctx.fillStyle = CONFIG.WHITE;
+/* --- UI helpers --- */
+function panel(x, y, w, h, r) {
+  ctx.fillStyle = "rgba(14,14,26,0.72)";
+  roundRect(x, y, w, h, r); ctx.fill();
+  ctx.strokeStyle = "rgba(255,45,120,0.4)";
+  ctx.lineWidth = 1.5;
+  roundRect(x, y, w, h, r); ctx.stroke();
+}
+function glowText(text, x, y, font, fill, glow, blur) {
+  ctx.save();
+  ctx.font = font;
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = blur || 18; }
+  ctx.fillStyle = fill;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+// A row of rounded stat chips, centered on cx
+function drawChips(chips, cx, y) {
   ctx.font = "900 13px Arial, sans-serif";
-  ctx.fillText("ATTENDEES SECURED", 20, 30);
-  ctx.font = "900 30px Arial, sans-serif";
+  const pad = 15, gap = 10, h = 30;
+  const widths = chips.map(c => ctx.measureText(c[0]).width + pad * 2);
+  const total = widths.reduce((a, b) => a + b, 0) + gap * (chips.length - 1);
+  let x = cx - total / 2;
+  ctx.textAlign = "center";
+  for (let i = 0; i < chips.length; i++) {
+    ctx.fillStyle = "rgba(16,16,28,0.75)";
+    roundRect(x, y, widths[i], h, 15); ctx.fill();
+    ctx.strokeStyle = "rgba(255,45,120,0.55)";
+    ctx.lineWidth = 1.5;
+    roundRect(x, y, widths[i], h, 15); ctx.stroke();
+    ctx.fillStyle = chips[i][1];
+    ctx.font = "900 13px Arial, sans-serif";
+    ctx.fillText(chips[i][0], x + widths[i] / 2, y + 20);
+    x += widths[i] + gap;
+  }
+}
+// Pulsing pink action pill
+function startPill(label, y) {
+  const pa = 0.72 + 0.28 * Math.sin(elapsed * 4);
+  ctx.save();
+  ctx.globalAlpha = pa;
+  ctx.shadowColor = CONFIG.PINK; ctx.shadowBlur = 26;
   ctx.fillStyle = CONFIG.PINK;
-  ctx.fillText(String(score), 20, 62);
-  const scoreW = ctx.measureText(String(score)).width;
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.font = "900 16px Arial, sans-serif";
-  ctx.fillText("/ " + CONFIG.GOAL, 28 + scoreW, 62);
+  roundRect(W / 2 - 175, y, 350, 46, 23); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.font = "900 17px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(label, W / 2, y + 30);
+  ctx.restore();
+}
+// Hall of Fame: local top runs, with names
+function drawBoardPanel(x, y, w, h) {
+  panel(x, y, w, h, 14);
+  ctx.textAlign = "left";
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.font = "900 13px Arial, sans-serif";
+  ctx.fillText("🏆 HALL OF FAME", x + 20, y + 28);
+  const board = loadBoard().slice(0, 5);
+  if (!board.length) {
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.font = "700 13px Arial, sans-serif";
+    ctx.fillText("No runs yet — be the first!", x + 20, y + 62);
+    return;
+  }
+  const medals = ["🥇", "🥈", "🥉"];
+  board.forEach((e, i) => {
+    const ry = y + 56 + i * 22;
+    ctx.textAlign = "left";
+    ctx.font = "900 13px Arial, sans-serif";
+    ctx.fillStyle = i === 0 ? CONFIG.WHITE : "rgba(255,255,255,0.78)";
+    ctx.fillText((medals[i] || " " + (i + 1) + ". ") + " " + e.n + (e.w ? " 👑" : ""), x + 18, ry);
+    ctx.textAlign = "right";
+    ctx.fillStyle = CONFIG.PINK;
+    ctx.fillText(String(e.s), x + w - 20, ry);
+  });
+}
 
-  // Progress bar
-  const bw = 240;
-  ctx.fillStyle = "rgba(255,255,255,0.15)";
-  roundRect(20, 72, bw, 8, 4); ctx.fill();
+function drawHUD() {
+  // Score panel
+  panel(14, 14, 274, 76, 12);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(255,255,255,0.65)";
+  ctx.font = "900 11px Arial, sans-serif";
+  ctx.fillText("ATTENDEES SECURED", 28, 34);
+  ctx.save();
+  ctx.shadowColor = CONFIG.PINK; ctx.shadowBlur = 12;
+  ctx.font = "900 28px Arial, sans-serif";
   ctx.fillStyle = CONFIG.PINK;
-  const pw = Math.max(8, bw * Math.min(1, score / CONFIG.GOAL));
-  roundRect(20, 72, pw, 8, 4); ctx.fill();
-  // Milestone ticks
+  ctx.fillText(String(score), 28, 62);
+  ctx.restore();
+  ctx.font = "900 28px Arial, sans-serif";
+  const scoreW = ctx.measureText(String(score)).width;
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.font = "900 14px Arial, sans-serif";
+  ctx.fillText("/ " + CONFIG.GOAL, 36 + scoreW, 62);
+
+  // Progress bar with glow + milestone ticks
+  const bw = 218;
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  roundRect(28, 71, bw, 7, 3.5); ctx.fill();
+  ctx.save();
+  ctx.shadowColor = CONFIG.PINK; ctx.shadowBlur = 8;
+  ctx.fillStyle = CONFIG.PINK;
+  roundRect(28, 71, Math.max(7, bw * Math.min(1, score / CONFIG.GOAL)), 7, 3.5); ctx.fill();
+  ctx.restore();
   ctx.fillStyle = "rgba(10,10,15,0.9)";
   for (let m = CONFIG.MILESTONE_STEP; m < CONFIG.GOAL; m += CONFIG.MILESTONE_STEP) {
-    ctx.fillRect(20 + bw * (m / CONFIG.GOAL) - 1, 72, 2, 8);
+    ctx.fillRect(28 + bw * (m / CONFIG.GOAL) - 1, 71, 2, 7);
   }
 
-  // Lives (hearts)
+  // Lives (hearts) + runner name + streak, top right
   for (let i = 0; i < CONFIG.LIVES; i++) {
     drawHeart(W - 36 - i * 30, 32, 10, i < lives ? CONFIG.PINK : "rgba(255,255,255,0.15)");
   }
-
-  // Streak
-  if (streakShown > 1) {
-    ctx.textAlign = "right";
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.font = "900 13px Arial, sans-serif";
-    ctx.fillText("DAY " + streakShown + " 🔥", W - 20, 62);
-  }
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "900 13px Arial, sans-serif";
+  let tag = getName();
+  if (streakShown > 1) tag += "  ·  DAY " + streakShown + " 🔥";
+  ctx.fillText(tag, W - 20, 64);
 }
 function drawHeart(cx, cy, s, color) {
   ctx.fillStyle = color;
@@ -973,76 +1193,104 @@ function drawMilestoneBanner() {
 }
 
 /* --- Screens --- */
-function drawTitle(y) {
-  ctx.textAlign = "center";
-  ctx.fillStyle = CONFIG.WHITE;
-  ctx.font = "900 52px Arial, sans-serif";
-  ctx.fillText("ARCTIC RUN", W / 2, y);
-  ctx.fillStyle = CONFIG.PINK;
-  ctx.font = "900 30px Arial, sans-serif";
-  ctx.fillText("NORDEEP 3000", W / 2, y + 40);
-}
-function pressPrompt(text, y) {
-  const a = 0.55 + 0.45 * Math.sin(elapsed * 4);
-  ctx.fillStyle = "rgba(255,255,255," + a.toFixed(2) + ")";
-  ctx.font = "900 18px Arial, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(text, W / 2, y);
-}
+const IS_TOUCH = "ontouchstart" in window;
 function drawStartScreen() {
-  ctx.fillStyle = "rgba(10,10,15,0.55)";
+  // Radial vignette keeps the running explorer visible below
+  const vg = ctx.createRadialGradient(W / 2, H * 0.42, 120, W / 2, H * 0.5, W * 0.75);
+  vg.addColorStop(0, "rgba(10,10,15,0.30)");
+  vg.addColorStop(1, "rgba(10,10,15,0.80)");
+  ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
-  drawTitle(H * 0.32);
+  drawPlayer(); // keep the jogging explorer bright above the vignette
 
-  ctx.fillStyle = "rgba(255,255,255,0.75)";
-  ctx.font = "700 15px Arial, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("Run north. Grab attendee orbs. Fill the event: " + CONFIG.GOAL + " seats.", W / 2, H * 0.32 + 82);
-  ctx.fillText("← → / A D move · SPACE jump (twice = double jump) · stomp inbox monsters", W / 2, H * 0.32 + 106);
+  const bob = Math.sin(elapsed * 1.6) * 4;
 
-  // Best + streak
-  ctx.font = "900 20px Arial, sans-serif";
+  // Big glowing gradient title
+  const tg = ctx.createLinearGradient(0, 48 + bob, 0, 106 + bob);
+  tg.addColorStop(0, "#ffffff");
+  tg.addColorStop(1, "#ffc9dc");
+  glowText("ARCTIC RUN", W / 2, 102 + bob, "900 60px Arial, sans-serif", tg, "rgba(255,45,120,0.85)", 28);
+
+  // Pink badge subtitle
+  const bw2 = 292, bx = W / 2 - bw2 / 2, by = 120 + bob;
+  ctx.save();
+  ctx.shadowColor = CONFIG.PINK; ctx.shadowBlur = 24;
   ctx.fillStyle = CONFIG.PINK;
-  let statLine = "BEST: " + bestShown;
-  const st = currentStreak();
-  if (st > 0) statLine += "   ·   DAY " + st + " 🔥";
-  ctx.fillText(statLine, W / 2, H * 0.32 + 150);
+  roundRect(bx, by, bw2, 42, 21); ctx.fill();
+  ctx.restore();
+  ctx.textAlign = "center";
+  glowText("NORDEEP 3000", W / 2, by + 29, "900 24px Arial, sans-serif", CONFIG.WHITE, null, 0);
 
-  pressPrompt(("ontouchstart" in window) ? "TAP TO START" : "PRESS SPACE TO START", H * 0.78);
+  // Stat chips: name · best · streak
+  const st = currentStreak();
+  const chips = [];
+  if (getName()) chips.push([getName(), CONFIG.WHITE]);
+  chips.push(["BEST  " + bestShown, CONFIG.PINK]);
+  if (st > 0) chips.push(["DAY " + st + " 🔥", CONFIG.WHITE]);
+  drawChips(chips, W / 2, 202 + bob);
+
+  // Panels: how to run + hall of fame
+  drawControlsPanel(70, 250, 330, 166);
+  drawBoardPanel(W - 70 - 330, 250, 330, 166);
+
+  startPill(IS_TOUCH ? "TAP TO START" : "PRESS  SPACE  TO  START", 448);
+}
+function drawControlsPanel(x, y, w, h) {
+  panel(x, y, w, h, 14);
+  ctx.textAlign = "left";
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.font = "900 13px Arial, sans-serif";
+  ctx.fillText("⚡ HOW TO RUN", x + 20, y + 28);
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.font = "700 13px Arial, sans-serif";
+  const lines = IS_TOUCH ? [
+    "◀ ▶ buttons — move",
+    "JUMP — tap again mid-air to double-jump",
+    "Grab attendee orbs  +10",
+    "Stomp inbox monsters  +50",
+    "Fill all " + CONFIG.GOAL + " seats to win",
+  ] : [
+    "← → or A D — move",
+    "SPACE — jump · again mid-air = double",
+    "Grab attendee orbs  +10  ·  stomp monsters  +50",
+    "Fill all " + CONFIG.GOAL + " seats to win",
+    "N — change name  ·  M — mute",
+  ];
+  lines.forEach((l, i) => ctx.fillText(l, x + 20, y + 56 + i * 22));
 }
 function drawWinScreen() {
-  ctx.fillStyle = "rgba(10,10,15,0.6)";
+  ctx.fillStyle = "rgba(10,10,15,0.62)";
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
-  ctx.fillStyle = CONFIG.PINK;
-  ctx.font = "900 46px Arial, sans-serif";
-  ctx.fillText("NORDEEP IS FULL.", W / 2, H * 0.34);
-  ctx.fillStyle = CONFIG.WHITE;
-  ctx.font = "900 30px Arial, sans-serif";
-  ctx.fillText("See you in Espoo.", W / 2, H * 0.34 + 44);
+  const bob = Math.sin(elapsed * 2) * 3;
+  glowText("NORDEEP IS FULL.", W / 2, 128 + bob, "900 50px Arial, sans-serif", CONFIG.PINK, "rgba(255,45,120,0.9)", 30);
+  glowText("See you in Espoo.", W / 2, 172 + bob, "900 26px Arial, sans-serif", CONFIG.WHITE, "rgba(255,255,255,0.35)", 10);
 
-  ctx.font = "900 18px Arial, sans-serif";
-  ctx.fillStyle = "rgba(255,255,255,0.85)";
   const ws = winStats || { score, streak: streakShown, best: bestShown };
-  ctx.fillText("FINAL: " + ws.score + "   ·   BEST: " + ws.best + (ws.streak > 0 ? "   ·   DAY " + ws.streak + " 🔥" : ""), W / 2, H * 0.34 + 92);
+  const chips = [];
+  if (getName()) chips.push([getName() + " 👑", CONFIG.WHITE]);
+  chips.push(["FINAL  " + ws.score, CONFIG.PINK], ["BEST  " + ws.best, CONFIG.WHITE]);
+  if (ws.streak > 0) chips.push(["DAY " + ws.streak + " 🔥", CONFIG.WHITE]);
+  drawChips(chips, W / 2, 198);
 
-  pressPrompt(("ontouchstart" in window) ? "TAP TO PLAY AGAIN" : "PRESS SPACE TO PLAY AGAIN", H * 0.75);
+  drawBoardPanel(W / 2 - 165, 246, 330, 166);
+  startPill(IS_TOUCH ? "TAP TO RUN AGAIN" : "PRESS  SPACE  TO  RUN  AGAIN", 448);
 }
 function drawGameOverScreen() {
-  ctx.fillStyle = "rgba(10,10,15,0.6)";
+  ctx.fillStyle = "rgba(10,10,15,0.62)";
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
-  ctx.fillStyle = CONFIG.WHITE;
-  ctx.font = "900 42px Arial, sans-serif";
-  ctx.fillText("THE ICE GOT YOU", W / 2, H * 0.36);
-  ctx.fillStyle = CONFIG.PINK;
-  ctx.font = "900 22px Arial, sans-serif";
-  ctx.fillText(score + " attendees secured", W / 2, H * 0.36 + 40);
-  ctx.fillStyle = "rgba(255,255,255,0.7)";
-  ctx.font = "900 16px Arial, sans-serif";
-  ctx.fillText("BEST: " + bestShown, W / 2, H * 0.36 + 72);
+  glowText("THE ICE GOT YOU", W / 2, 132, "900 46px Arial, sans-serif", CONFIG.WHITE, "rgba(255,255,255,0.4)", 20);
+  glowText(score + " attendees secured", W / 2, 172, "900 20px Arial, sans-serif", CONFIG.PINK, "rgba(255,45,120,0.7)", 14);
 
-  pressPrompt(("ontouchstart" in window) ? "TAP TO PLAY AGAIN" : "PRESS SPACE TO PLAY AGAIN", H * 0.72);
+  const chips = [];
+  if (getName()) chips.push([getName(), CONFIG.WHITE]);
+  chips.push(["BEST  " + bestShown, CONFIG.PINK]);
+  drawChips(chips, W / 2, 198);
+
+  drawBoardPanel(W / 2 - 165, 246, 330, 166);
+  startPill(IS_TOUCH ? "TAP TO RUN AGAIN" : "PRESS  SPACE  TO  RUN  AGAIN", 448);
 }
 
 /* --- Helpers --- */
@@ -1069,12 +1317,17 @@ function resetRunSceneOnly() {
 }
 
 let lastT = performance.now();
+let lastUIState = "";
 function frame(now) {
   // Clamp dt so a background tab doesn't teleport the player
   const dt = Math.min(0.033, (now - lastT) / 1000);
   lastT = now;
   update(dt);
   draw();
+  if (state !== lastUIState) { // "✎ NAME" button only outside of runs
+    lastUIState = state;
+    editBtn.style.display = state === "playing" ? "none" : "block";
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

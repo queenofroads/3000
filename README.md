@@ -8,14 +8,19 @@ grab glowing attendee orbs, stomp inbox monsters, and fill the event —
 
 - **← → / A D** — move
 - **SPACE / W / ↑** — jump (press again in the air to double-jump)
-- **M** — mute
+- **M** — mute · **N** — change your runner name
 - On touch devices, on-screen buttons appear automatically.
+
+On your first run you enter your name — every finished run lands on the
+**🏆 Hall of Fame** (top scores with names, crowns 👑 for full-3000 wins),
+shown on the start, win, and game-over screens.
 
 Jump on inbox monsters to squash them (+50). Orbs are +10. Milestone
 banner every 750. Three lives, gentle difficulty — a run takes 2–4 minutes.
 
-Your best score and daily play streak ("Day 7 🔥") are saved in
-`localStorage`, so play once a day to keep the streak alive.
+Your best score, daily play streak ("Day 7 🔥"), name, and the Hall of
+Fame are saved in `localStorage`, so play once a day to keep the streak
+alive.
 
 ## Deploy
 
