@@ -1316,6 +1316,9 @@ function resetRunSceneOnly() {
   player = { rel: 190, y: GROUND_Y - 40, w: 26, h: 40, vy: 0, jumps: 0, onGround: true, onCloud: null, inv: 0, runPhase: 0 };
 }
 
+// First visit: pop up the name card right away, before anything else
+if (!getName()) setTimeout(showNameUI, 500);
+
 let lastT = performance.now();
 let lastUIState = "";
 function frame(now) {
