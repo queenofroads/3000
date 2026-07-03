@@ -641,13 +641,7 @@ function overGround(px, w) {
 function update(dt) {
   elapsed += dt;
   if (state !== "playing") {
-    if (state === "start") {
-      // Attract mode: world drifts by, explorer jogs in place
-      camX += 42 * dt;
-      if (grounds[0]) grounds[0].x1 = Math.max(grounds[0].x1, camX + W + 500);
-      player.runPhase += dt * 12;
-    }
-    // keep confetti + background alive on end screens
+    // Menus stay still — only ambient animation (stars, aurora, confetti)
     updateConfetti(dt);
     updateParticles(dt);
     input.jumpPressed = false;
