@@ -19,14 +19,26 @@ on the start, win, and game-over screens.
 
 Out of the box the leaderboard is per-device. To make it **global** —
 every player sees everyone's best scores — the repo ships a tiny
-serverless function (`api/scores.js`). Enable it in ~2 minutes:
+serverless function (`api/scores.js`) that works with either backend,
+auto-detected from the project's env vars:
 
-1. In your Vercel project, open **Storage** (or Marketplace) and add
-   **Upstash for Redis** — the free tier is plenty.
-2. Connect it to this project; Vercel sets the Redis env vars
-   automatically (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or
-   `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
-3. Redeploy.
+**Option A — Supabase** (Vercel marketplace integration):
+1. Connect Supabase to the Vercel project (sets `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` automatically).
+2. In the Supabase dashboard → SQL Editor, run once:
+   ```sql
+   create table if not exists public.scores (
+     name text primary key,
+     score integer not null,
+     updated_at timestamptz not null default now()
+   );
+   ```
+3. Redeploy on Vercel.
+
+**Option B — Upstash Redis** (Vercel marketplace integration):
+1. Add **Upstash for Redis** and connect it to the project (sets
+   `KV_REST_API_URL`/`KV_REST_API_TOKEN` automatically). No SQL needed.
+2. Redeploy.
 
 The board panel switches from "🏆 HALL OF FAME · this device" to
 "🌍 GLOBAL TOP · all players" on its own once the backend responds.
