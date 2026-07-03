@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ARCTIC RUN: NORDEEP 3000</title>
+<style>
+  /* ============ NORDEEP brand: near-black, hot pink, white ============ */
+  :root {
+    --bg: #0a0a0f;
+    --pink: #ff2d78;
+    --white: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: "Arial Black", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    touch-action: manipulation;
+  }
+  #wrap {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    display: block;
+    background: var(--bg);
+    image-rendering: auto;
+    max-width: 100%; max-height: 100%;
+  }
+  /* ============ Touch controls (shown only on touch devices) ============ */
+  #touchUI {
+    position: fixed; inset: 0;
+    display: none;
+    pointer-events: none;
+    z-index: 10;
+  }
+  body.touch #touchUI { display: block; }
+  .tbtn {
+    position: absolute;
+    bottom: 4%;
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 45, 120, 0.8);
+    background: rgba(255, 45, 120, 0.12);
+    color: var(--white);
+    font-size: 26px;
+    font-weight: 900;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tbtn:active { background: rgba(255, 45, 120, 0.45); }
+  #btnL { left: 4%; }
+  #btnR { left: calc(4% + 88px); }
+  #btnJ { right: 4%; width: 92px; height: 92px; font-size: 15px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+<div id="touchUI">
+  <div class="tbtn" id="btnL">◀</div>
+  <div class="tbtn" id="btnR">▶</div>
+  <div class="tbtn" id="btnJ">JUMP</div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   ARCTIC RUN: NORDEEP 3000
+   A single-file canvas platformer. No dependencies, no build step.
+   Everything tweakable lives in CONFIG below.
+   ===================================================================== */
+
+const CONFIG = {
+  // --- Brand colors ---
+  BG:        "#0a0a0f",
+  PINK:      "#ff2d78",
+  PINK_DIM:  "rgba(255,45,120,0.35)",
+  WHITE:     "#ffffff",
+
+  // --- The goal ---
+  GOAL: 3000,            // attendees to secure = win
+  MILESTONE_STEP: 750,   // pink flash + banner every N points
+
+  // --- Scoring ---
+  ORB_POINTS: 10,        // per attendee orb
+  STOMP_POINTS: 50,      // per inbox monster squashed
+
+  // --- Feel / difficulty (gentle: winnable in 2-4 min) ---
+  SCROLL_BASE: 245,      // world scroll px/s at start
+  SCROLL_MAX:  310,      // scroll px/s near the end
+  GRAVITY: 2200,         // px/s^2
+  JUMP_VEL: 830,         // first jump velocity
+  JUMP_VEL2: 760,        // double-jump velocity
+  MOVE_SPEED: 220,       // player left/right adjust px/s
+  LIVES: 3,
+  INVINCIBLE_TIME: 2.2,  // seconds of mercy after a hit
+
+  // --- Canvas logical size (scaled to fit screen) ---
+  W: 960, H: 540,
+};
+
+/* ============================ Canvas setup ============================ */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = CONFIG.W, H = CONFIG.H;
+const GROUND_Y = H - 84; // top surface of the ice shelf
+
+function fitCanvas() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width  = Math.floor(W * scale) + "px";
+  canvas.style.height = Math.floor(H * scale) + "px";
+}
+window.addEventListener("resize", fitCanvas);
+fitCanvas();
+
+/* ====================== localStorage: best + streak ====================== */
+const LS_BEST   = "nordeep3000_best";
+const LS_STREAK = "nordeep3000_streak";
+const LS_LAST   = "nordeep3000_lastday";
+const LS_BESTSTREAK = "nordeep3000_beststreak";
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function loadBest() { return parseInt(localStorage.getItem(LS_BEST) || "0", 10) || 0; }
+function saveBest(v) { localStorage.setItem(LS_BEST, String(v)); }
+
+// Streak: consecutive calendar days with at least one run started.
+function updateStreak() {
+  const today = todayStr();
+  const last = localStorage.getItem(LS_LAST);
+  let streak = parseInt(localStorage.getItem(LS_STREAK) || "0", 10) || 0;
+  if (last === today) {
+    // already counted today
+  } else {
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yesterday = y.getFullYear() + "-" + String(y.getMonth() + 1).padStart(2, "0") + "-" + String(y.getDate()).padStart(2, "0");
+    streak = (last === yesterday) ? streak + 1 : 1;
+    localStorage.setItem(LS_STREAK, String(streak));
+    localStorage.setItem(LS_LAST, today);
+    const bs = parseInt(localStorage.getItem(LS_BESTSTREAK) || "0", 10) || 0;
+    if (streak > bs) localStorage.setItem(LS_BESTSTREAK, String(streak));
+  }
+  return streak;
+}
+function currentStreak() {
+  // For display on the start screen without bumping the streak.
+  const last = localStorage.getItem(LS_LAST);
+  const streak = parseInt(localStorage.getItem(LS_STREAK) || "0", 10) || 0;
+  if (!last) return 0;
+  if (last === todayStr()) return streak;
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  const yesterday = y.getFullYear() + "-" + String(y.getMonth() + 1).padStart(2, "0") + "-" + String(y.getDate()).padStart(2, "0");
+  return last === yesterday ? streak : 0;
+}
+
+/* ============================ Tiny sounds ============================ */
+// Minimal WebAudio blips, created lazily on first input. Press M to mute.
+let audioCtx = null, muted = false;
+function beep(freq, dur, type, vol, slide) {
+  if (muted) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type || "square";
+    o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, audioCtx.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.06, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch (e) { /* audio unsupported: play silently */ }
+}
+const sfx = {
+  orb:   () => beep(880, 0.09, "sine", 0.05, 1320),
+  stomp: () => beep(220, 0.12, "square", 0.06, 110),
+  jump:  () => beep(330, 0.08, "triangle", 0.04, 520),
+  hit:   () => beep(160, 0.25, "sawtooth", 0.07, 60),
+  milestone: () => { beep(660, 0.12, "square", 0.05, 990); setTimeout(() => beep(990, 0.16, "square", 0.05, 1320), 110); },
+  win:   () => { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => beep(f, 0.18, "square", 0.06), i * 130)); },
+};
+
+/* ============================== Input ============================== */
+const input = { left: false, right: false, jumpHeld: false, jumpPressed: false };
+
+function pressJump() { input.jumpPressed = true; input.jumpHeld = true; }
+
+window.addEventListener("keydown", (e) => {
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," ","Spacebar"].includes(e.key)) e.preventDefault();
+  if (e.repeat) return;
+  switch (e.key) {
+    case "ArrowLeft": case "a": case "A": input.left = true; break;
+    case "ArrowRight": case "d": case "D": input.right = true; break;
+    case " ": case "Spacebar": case "ArrowUp": case "w": case "W":
+      pressJump();
+      if (state !== "playing") advanceState();
+      break;
+    case "m": case "M": muted = !muted; break;
+  }
+});
+window.addEventListener("keyup", (e) => {
+  switch (e.key) {
+    case "ArrowLeft": case "a": case "A": input.left = false; break;
+    case "ArrowRight": case "d": case "D": input.right = false; break;
+    case " ": case "Spacebar": case "ArrowUp": case "w": case "W": input.jumpHeld = false; break;
+  }
+});
+
+// Touch controls
+function bindTouch(el, down, up) {
+  el.addEventListener("touchstart", (e) => { e.preventDefault(); down(); }, { passive: false });
+  el.addEventListener("touchend",   (e) => { e.preventDefault(); up(); },   { passive: false });
+  el.addEventListener("touchcancel",(e) => { e.preventDefault(); up(); },   { passive: false });
+}
+bindTouch(document.getElementById("btnL"), () => input.left = true,  () => input.left = false);
+bindTouch(document.getElementById("btnR"), () => input.right = true, () => input.right = false);
+bindTouch(document.getElementById("btnJ"), () => { pressJump(); if (state !== "playing") advanceState(); }, () => input.jumpHeld = false);
+window.addEventListener("touchstart", () => {
+  document.body.classList.add("touch");
+}, { once: true });
+// Tapping the canvas starts/restarts (jump is on the button during play)
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  if (state !== "playing") { pressJump(); advanceState(); }
+}, { passive: false });
+canvas.addEventListener("mousedown", () => { if (state !== "playing") advanceState(); });
+
+/* ========================= World / level state ========================= */
+// The level is generated as "chunks" streaming in from the right.
+// Each chunk picks a pattern weighted by the current difficulty band
+// (band = milestones passed), so every run differs but stays fair.
+
+let state = "start";      // start | playing | win | gameover
+let score, lives, camX, scrollSpeed, elapsed;
+let player, grounds, orbs, enemies, clouds, particles, confetti;
+let genX;                 // world x up to which the level is generated
+let nextMilestone;        // next score threshold for a milestone moment
+let milestoneTimer = 0;   // banner/flash countdown
+let milestoneValue = 0;   // which milestone we're celebrating
+let flashAlpha = 0;
+let shakeT = 0;
+let streakShown = currentStreak();
+let bestShown = loadBest();
+let winStats = null;
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const randi = (a, b) => Math.floor(rand(a, b + 1));
+const chance = (p) => Math.random() < p;
+
+function difficultyBand() {
+  return Math.min(3, Math.floor(score / CONFIG.MILESTONE_STEP)); // 0..3
+}
+
+function resetRun() {
+  score = 0; lives = CONFIG.LIVES; camX = 0; elapsed = 0;
+  scrollSpeed = CONFIG.SCROLL_BASE;
+  nextMilestone = CONFIG.MILESTONE_STEP;
+  milestoneTimer = 0; flashAlpha = 0; shakeT = 0;
+  grounds = []; orbs = []; enemies = []; clouds = []; particles = []; confetti = [];
+  winStats = null;
+  player = {
+    rel: 190,            // x offset from camera (player auto-runs with the world)
+    y: GROUND_Y - 40,
+    w: 26, h: 40,
+    vy: 0,
+    jumps: 0,            // jumps used since last landing (max 2 = double jump)
+    onGround: true,
+    onCloud: null,
+    inv: 0,              // invincibility seconds remaining
+    dead: false,
+    runPhase: 0,
+  };
+  // Safe opening runway, then stream chunks
+  grounds.push({ x0: -200, x1: 900 });
+  genX = 900;
+  // A friendly opening line of orbs
+  for (let i = 0; i < 6; i++) orbs.push(makeOrb(420 + i * 55, GROUND_Y - 60));
+  while (genX < camX + W * 2.5) genChunk();
+  streakShown = updateStreak();
+  bestShown = loadBest();
+}
+
+function makeOrb(x, y) { return { x, y, r: 8, taken: false, phase: rand(0, 6.28) }; }
+function makeEnemy(x0, x1) {
+  const x = rand(x0 + 30, x1 - 30);
+  return {
+    x, y: GROUND_Y - 26, w: 30, h: 26,
+    x0: x0 + 20, x1: x1 - 20,
+    dir: chance(0.5) ? 1 : -1,
+    speed: rand(50, 85) + difficultyBand() * 12,
+    dead: false, squash: 0,
+  };
+}
+function makeCloud(x, y, opts) {
+  return {
+    x, baseY: y, y, w: opts.w || randi(90, 130), h: 18,
+    amp: opts.amp || rand(20, 46),
+    spd: opts.spd || rand(1.2, 2.2),
+    phase: rand(0, 6.28),
+  };
+}
+
+/* ------------------------- Chunk generation ------------------------- */
+// Patterns per difficulty band. Gaps stay well within double-jump range.
+function pushGround(x0, x1) {
+  // Merge with the previous segment when contiguous, so pink "crevasse edge"
+  // glows only appear at real gaps
+  const last = grounds[grounds.length - 1];
+  if (last && Math.abs(last.x1 - x0) < 2) last.x1 = x1;
+  else grounds.push({ x0, x1 });
+}
+function genChunk() {
+  const band = difficultyBand();
+  const x = genX;
+  // Weighted pattern pick
+  const roll = Math.random();
+  let pattern;
+  if (band === 0)      pattern = roll < 0.30 ? "flat" : roll < 0.55 ? "gap" : roll < 0.75 ? "enemy" : roll < 0.90 ? "cloudGap" : "orbArc";
+  else if (band === 1) pattern = roll < 0.20 ? "flat" : roll < 0.48 ? "gap" : roll < 0.72 ? "enemy" : roll < 0.88 ? "cloudGap" : "orbArc";
+  else                 pattern = roll < 0.12 ? "flat" : roll < 0.40 ? "gap" : roll < 0.62 ? "enemy" : roll < 0.84 ? "cloudGap" : "doubleGap";
+
+  switch (pattern) {
+    case "flat": {
+      const len = randi(380, 560);
+      pushGround(x, x + len);
+      orbLine(x + 60, len - 120, GROUND_Y - rand(55, 80), randi(4, 6));
+      if (band >= 1 && chance(0.4)) enemies.push(makeEnemy(x + 40, x + len - 40));
+      genX = x + len;
+      break;
+    }
+    case "gap": {
+      const runway = randi(240, 360);
+      const gap = randi(110, 150) + band * 12;   // jumpable with a single jump; double = easy
+      pushGround(x, x + runway);
+      orbArcOverGap(x + runway, gap);
+      const landing = randi(260, 420);
+      pushGround(x + runway + gap, x + runway + gap + landing);
+      if (chance(0.35 + band * 0.1)) enemies.push(makeEnemy(x + runway + gap + 30, x + runway + gap + landing - 30));
+      genX = x + runway + gap + landing;
+      break;
+    }
+    case "doubleGap": { // two quick crevasses — rhythm jumps (band 2+)
+      const runway = randi(220, 300);
+      const gap1 = randi(105, 135), isle = randi(120, 170), gap2 = randi(105, 135);
+      pushGround(x, x + runway);
+      pushGround(x + runway + gap1, x + runway + gap1 + isle);
+      const start2 = x + runway + gap1 + isle + gap2;
+      const landing = randi(280, 420);
+      pushGround(start2, start2 + landing);
+      orbArcOverGap(x + runway, gap1);
+      orbArcOverGap(x + runway + gap1 + isle, gap2);
+      genX = start2 + landing;
+      break;
+    }
+    case "enemy": {
+      const len = randi(420, 600);
+      pushGround(x, x + len);
+      enemies.push(makeEnemy(x + 60, x + len * 0.55));
+      if (band >= 2 && chance(0.5)) enemies.push(makeEnemy(x + len * 0.55, x + len - 60));
+      orbLine(x + 80, len - 160, GROUND_Y - rand(95, 130), randi(4, 6)); // orbs float above the patrol
+      genX = x + len;
+      break;
+    }
+    case "cloudGap": { // a wide crevasse crossed via bobbing "deadline" clouds
+      const runway = randi(220, 320);
+      const wide = randi(260, 340);
+      pushGround(x, x + runway);
+      const c1 = makeCloud(x + runway + wide * 0.18, GROUND_Y - randi(70, 100), {});
+      const c2 = makeCloud(x + runway + wide * 0.58, GROUND_Y - randi(95, 130), {});
+      clouds.push(c1, c2);
+      orbs.push(makeOrb(c1.x + c1.w / 2, c1.baseY - 40));
+      orbs.push(makeOrb(c2.x + c2.w / 2, c2.baseY - 40));
+      orbs.push(makeOrb(x + runway + wide * 0.85, GROUND_Y - 120));
+      const landing = randi(280, 420);
+      pushGround(x + runway + wide, x + runway + wide + landing);
+      genX = x + runway + wide + landing;
+      break;
+    }
+    case "orbArc": { // pure reward: a big arc of orbs on flat ground
+      const len = randi(420, 560);
+      pushGround(x, x + len);
+      const cx = x + len / 2, n = randi(7, 9);
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        const ox = cx + (t - 0.5) * len * 0.7;
+        const oy = GROUND_Y - 60 - Math.sin(t * Math.PI) * 110;
+        orbs.push(makeOrb(ox, oy));
+      }
+      genX = x + len;
+      break;
+    }
+  }
+}
+function orbLine(x, span, y, n) {
+  for (let i = 0; i < n; i++) orbs.push(makeOrb(x + (span / Math.max(1, n - 1)) * i, y));
+}
+function orbArcOverGap(gapStart, gapW) {
+  const n = 5;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const ox = gapStart - 30 + t * (gapW + 60);
+    const oy = GROUND_Y - 55 - Math.sin(t * Math.PI) * 85;
+    orbs.push(makeOrb(ox, oy));
+  }
+}
+
+/* ========================= State transitions ========================= */
+function advanceState() {
+  if (state === "start" || state === "win" || state === "gameover") {
+    resetRun();
+    state = "playing";
+    input.jumpPressed = false; // don't jump on the same press that started the run
+  }
+}
+
+function loseLife(reason) {
+  const mercy = player.inv > 0;
+  if (!mercy) {
+    lives--;
+    sfx.hit();
+    shakeT = 0.35;
+    burst(camX + player.rel, player.y + player.h / 2, CONFIG.PINK, 14);
+    if (lives <= 0) {
+      state = "gameover";
+      if (score > bestShown) { saveBest(score); bestShown = score; }
+      return;
+    }
+    player.inv = CONFIG.INVINCIBLE_TIME;
+  } else if (reason !== "pit") {
+    return; // invincible: shrug off enemy hits
+  }
+  if (reason === "pit") {
+    // Respawn above solid ground ahead of the camera (even mid-invincibility,
+    // so a bad respawn spot can never leave the player falling forever)
+    const seg = grounds.find(g => g.x1 > camX + 190);
+    let gx = seg ? Math.max(seg.x0 + 50, camX + 150) : camX + 190;
+    if (seg) gx = Math.min(gx, seg.x1 - 40);
+    player.rel = Math.max(60, gx - camX);
+    player.y = GROUND_Y - player.h - 130; // drop back in gently from above
+    player.vy = 0; player.jumps = 0; player.onCloud = null;
+    player.inv = Math.max(player.inv, 1.2);
+  }
+}
+
+function winGame() {
+  state = "win";
+  sfx.win();
+  if (score > bestShown) { saveBest(score); bestShown = score; }
+  winStats = { score, streak: streakShown, best: bestShown };
+  // Big pink/white confetti burst
+  for (let i = 0; i < 160; i++) {
+    confetti.push({
+      x: W / 2 + rand(-60, 60), y: H * 0.35 + rand(-40, 40),
+      vx: rand(-320, 320), vy: rand(-520, -80),
+      w: rand(5, 11), h: rand(8, 16),
+      rot: rand(0, 6.28), vr: rand(-8, 8),
+      color: chance(0.55) ? CONFIG.PINK : CONFIG.WHITE,
+      life: rand(2.2, 3.6),
+    });
+  }
+}
+
+function addScore(n, x, y) {
+  score += n;
+  if (score >= nextMilestone && nextMilestone <= CONFIG.GOAL) {
+    if (nextMilestone >= CONFIG.GOAL) {
+      score = Math.max(score, CONFIG.GOAL);
+      winGame();
+    } else {
+      milestoneValue = nextMilestone;
+      milestoneTimer = 1.6;
+      flashAlpha = 0.55;
+      sfx.milestone();
+    }
+    nextMilestone += CONFIG.MILESTONE_STEP;
+  }
+}
+
+/* =========================== Particles =========================== */
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x, y, vx: rand(-180, 180), vy: rand(-260, 40),
+      r: rand(2, 5), color, life: rand(0.3, 0.7), t: 0,
+    });
+  }
+}
+
+/* ============================= Update ============================= */
+function overGround(px, w) {
+  // Is any solid ground under this horizontal span?
+  return grounds.some(g => px + w > g.x0 && px < g.x1);
+}
+
+function update(dt) {
+  elapsed += dt;
+  if (state !== "playing") {
+    // keep confetti + background alive on end screens
+    updateConfetti(dt);
+    updateParticles(dt);
+    input.jumpPressed = false;
+    return;
+  }
+
+  // Scroll speed ramps gently with progress
+  const prog = Math.min(1, score / CONFIG.GOAL);
+  scrollSpeed = CONFIG.SCROLL_BASE + (CONFIG.SCROLL_MAX - CONFIG.SCROLL_BASE) * prog;
+  camX += scrollSpeed * dt;
+
+  // Stream in new level, prune what's behind us
+  while (genX < camX + W * 2.5) genChunk();
+  grounds = grounds.filter(g => g.x1 > camX - 300);
+  orbs = orbs.filter(o => !o.taken && o.x > camX - 100);
+  enemies = enemies.filter(e => e.x1 > camX - 150 && (!e.dead || e.squash < 0.5));
+  clouds = clouds.filter(c => c.x + c.w > camX - 150);
+
+  /* --- Player --- */
+  const p = player;
+  if (input.left)  p.rel -= CONFIG.MOVE_SPEED * dt;
+  if (input.right) p.rel += CONFIG.MOVE_SPEED * dt;
+  p.rel = Math.max(60, Math.min(W * 0.62, p.rel));
+  const px = camX + p.rel; // world x (left edge)
+  p.x = px;
+
+  // Jumping (space = jump, second press in air = double jump)
+  if (input.jumpPressed) {
+    if (p.onGround || p.onCloud) {
+      p.vy = -CONFIG.JUMP_VEL; p.jumps = 1; p.onGround = false; p.onCloud = null; sfx.jump();
+    } else if (p.jumps < 2) {
+      p.vy = -CONFIG.JUMP_VEL2; p.jumps = 2; sfx.jump();
+      burst(px + p.w / 2, p.y + p.h, "rgba(255,255,255,0.9)", 6);
+    }
+    input.jumpPressed = false;
+  }
+  // Variable jump height: cut upward velocity when jump released
+  if (!input.jumpHeld && p.vy < -280) p.vy = -280;
+
+  const prevFeet = p.y + p.h;
+  p.vy += CONFIG.GRAVITY * dt;
+  p.y += p.vy * dt;
+  const feet = p.y + p.h;
+
+  // Cloud platforms (land on top only)
+  if (p.onCloud) {
+    const c = p.onCloud;
+    if (px + p.w > c.x && px < c.x + c.w) {
+      p.y = c.y - p.h; p.vy = 0;
+    } else {
+      p.onCloud = null; // walked off the edge
+    }
+  }
+  if (!p.onCloud && p.vy >= 0) {
+    for (const c of clouds) {
+      if (px + p.w > c.x + 6 && px < c.x + c.w - 6 && prevFeet <= c.y + 10 && feet >= c.y) {
+        p.y = c.y - p.h; p.vy = 0; p.jumps = 0; p.onCloud = c; p.onGround = false;
+        break;
+      }
+    }
+  }
+
+  // Ground (ice shelf with crevasses)
+  p.onGround = false;
+  if (!p.onCloud && p.vy >= 0 && prevFeet <= GROUND_Y + 12 && feet >= GROUND_Y && overGround(px, p.w)) {
+    p.y = GROUND_Y - p.h; p.vy = 0; p.jumps = 0; p.onGround = true;
+  }
+
+  // Fell into a crevasse
+  if (p.y > H + 40) loseLife("pit");
+
+  // Invincibility timer
+  if (p.inv > 0) p.inv -= dt;
+
+  // Run animation phase
+  p.runPhase += dt * (p.onGround ? 14 : 6);
+
+  /* --- Orbs --- */
+  for (const o of orbs) {
+    if (o.taken) continue;
+    o.phase += dt * 3;
+    const oy = o.y + Math.sin(o.phase) * 5;
+    const dx = (px + p.w / 2) - o.x, dy = (p.y + p.h / 2) - oy;
+    if (dx * dx + dy * dy < 34 * 34) {
+      o.taken = true;
+      addScore(CONFIG.ORB_POINTS, o.x, oy);
+      sfx.orb();
+      burst(o.x, oy, CONFIG.PINK, 6);
+      if (state !== "playing") return; // hit 3000 mid-loop
+    }
+  }
+
+  /* --- Clouds bob --- */
+  for (const c of clouds) {
+    const oldY = c.y;
+    c.y = c.baseY + Math.sin(elapsed * c.spd + c.phase) * c.amp;
+    if (p.onCloud === c) p.y += c.y - oldY; // carry the player
+  }
+
+  /* --- Enemies (inbox monsters) --- */
+  for (const e of enemies) {
+    if (e.dead) { e.squash += dt; continue; }
+    e.x += e.dir * e.speed * dt;
+    if (e.x < e.x0) { e.x = e.x0; e.dir = 1; }
+    if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
+    // Collision with player
+    if (px + p.w > e.x && px < e.x + e.w && p.y + p.h > e.y && p.y < e.y + e.h) {
+      if (p.vy > 120 && (p.y + p.h) - e.y < 20) {
+        // Stomp!
+        e.dead = true; e.squash = 0;
+        p.vy = -CONFIG.JUMP_VEL * 0.55; p.jumps = 1;
+        addScore(CONFIG.STOMP_POINTS, e.x + e.w / 2, e.y);
+        sfx.stomp();
+        burst(e.x + e.w / 2, e.y, CONFIG.WHITE, 10);
+        if (state !== "playing") return;
+      } else {
+        loseLife("enemy");
+        if (state !== "playing") return;
+      }
+    }
+  }
+
+  /* --- Timers, particles --- */
+  if (milestoneTimer > 0) milestoneTimer -= dt;
+  if (flashAlpha > 0) flashAlpha = Math.max(0, flashAlpha - dt * 1.4);
+  if (shakeT > 0) shakeT -= dt;
+  updateParticles(dt);
+  input.jumpPressed = false;
+}
+
+function updateParticles(dt) {
+  for (const pt of particles) {
+    pt.t += dt;
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 900 * dt;
+  }
+  particles = particles.filter(pt => pt.t < pt.life);
+}
+function updateConfetti(dt) {
+  for (const c of confetti) {
+    c.x += c.vx * dt; c.y += c.vy * dt;
+    c.vy += 620 * dt; c.vx *= 0.99;
+    c.rot += c.vr * dt; c.life -= dt;
+  }
+  confetti = confetti.filter(c => c.life > 0 && c.y < H + 30);
+}
+
+/* ============================= Render ============================= */
+function draw() {
+  ctx.save();
+  // Screen shake on hits
+  if (shakeT > 0) ctx.translate(rand(-5, 5), rand(-5, 5));
+
+  // --- Sky ---
+  ctx.fillStyle = CONFIG.BG;
+  ctx.fillRect(-10, -10, W + 20, H + 20);
+  drawStars();
+  drawAurora();
+  drawMountains();
+
+  if (state === "playing" || state === "win" || state === "gameover") {
+    drawGround();
+    drawClouds();
+    drawOrbs();
+    drawEnemies();
+    if (state === "playing") drawPlayer();
+    drawParticles();
+  }
+
+  // Pink milestone flash
+  if (flashAlpha > 0) {
+    ctx.fillStyle = "rgba(255,45,120," + flashAlpha.toFixed(3) + ")";
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  if (state === "playing") drawHUD();
+  if (milestoneTimer > 0 && state === "playing") drawMilestoneBanner();
+
+  drawConfetti();
+
+  if (state === "start") drawStartScreen();
+  if (state === "win") drawWinScreen();
+  if (state === "gameover") drawGameOverScreen();
+
+  ctx.restore();
+}
+
+/* --- Background layers (parallax) --- */
+const stars = Array.from({ length: 70 }, () => ({
+  x: Math.random() * W, y: Math.random() * H * 0.7,
+  r: Math.random() * 1.6 + 0.4, tw: Math.random() * 6.28,
+}));
+function drawStars() {
+  const off = (camX * 0.05) % W;
+  for (const s of stars) {
+    const x = (s.x - off + W) % W;
+    const a = 0.35 + 0.35 * Math.sin(elapsed * 1.5 + s.tw);
+    ctx.fillStyle = "rgba(255,255,255," + a.toFixed(2) + ")";
+    ctx.beginPath(); ctx.arc(x, s.y, s.r, 0, 6.28); ctx.fill();
+  }
+}
+function drawAurora() {
+  // Soft pink aurora ribbons
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let band = 0; band < 3; band++) {
+    ctx.beginPath();
+    const baseY = 70 + band * 38;
+    for (let x = 0; x <= W; x += 16) {
+      const y = baseY
+        + Math.sin(x * 0.008 + elapsed * 0.5 + band * 2) * 22
+        + Math.sin(x * 0.02 - elapsed * 0.3 + band) * 10;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.lineWidth = 26 - band * 6;
+    ctx.strokeStyle = "rgba(255,45,120," + (0.05 + band * 0.015).toFixed(3) + ")";
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawMountains() {
+  // Two parallax layers of jagged silhouettes
+  drawMountainLayer(0.18, H - 150, 120, "rgba(24,24,38,1)");
+  drawMountainLayer(0.34, H - 105, 80, "rgba(16,16,26,1)");
+}
+function drawMountainLayer(parallax, baseY, amp, color) {
+  const off = camX * parallax;
+  const seg = 140;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  const start = Math.floor(off / seg) * seg;
+  for (let wx = start; wx <= off + W + seg; wx += seg) {
+    // Deterministic pseudo-random peak height per world segment
+    const n = Math.sin(wx * 12.9898) * 43758.5453;
+    const hgt = (n - Math.floor(n)) * amp;
+    ctx.lineTo(wx - off, baseY - hgt);
+    ctx.lineTo(wx - off + seg / 2, baseY - hgt * 0.35);
+  }
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/* --- World --- */
+function drawGround() {
+  for (const g of grounds) {
+    const x0 = g.x0 - camX, x1 = g.x1 - camX;
+    if (x1 < -20 || x0 > W + 20) continue;
+    // Ice body
+    ctx.fillStyle = "#121220";
+    ctx.fillRect(x0, GROUND_Y, x1 - x0, H - GROUND_Y);
+    // Bright top surface
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillRect(x0, GROUND_Y, x1 - x0, 4);
+    // Pink glow on crevasse edges
+    ctx.fillStyle = CONFIG.PINK;
+    ctx.fillRect(x0, GROUND_Y, 3, H - GROUND_Y);
+    ctx.fillRect(x1 - 3, GROUND_Y, 3, H - GROUND_Y);
+    // Subtle cracks
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+    for (let cx = Math.ceil(g.x0 / 90) * 90; cx < g.x1; cx += 90) {
+      const sx = cx - camX;
+      ctx.beginPath();
+      ctx.moveTo(sx, GROUND_Y + 8);
+      ctx.lineTo(sx + 12, GROUND_Y + 30);
+      ctx.lineTo(sx + 4, GROUND_Y + 52);
+      ctx.stroke();
+    }
+  }
+}
+function drawClouds() {
+  for (const c of clouds) {
+    const x = c.x - camX;
+    if (x + c.w < -20 || x > W + 20) continue;
+    ctx.fillStyle = "rgba(30,30,48,0.95)";
+    roundRect(x, c.y, c.w, c.h, 9); ctx.fill();
+    ctx.strokeStyle = CONFIG.PINK;
+    ctx.lineWidth = 2;
+    roundRect(x, c.y, c.w, c.h, 9); ctx.stroke();
+    // Tiny "deadline" clock mark
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x + c.w / 2, c.y + c.h / 2, 5, 0, 6.28); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + c.w / 2, c.y + c.h / 2);
+    ctx.lineTo(x + c.w / 2, c.y + c.h / 2 - 4);
+    ctx.stroke();
+  }
+}
+function drawOrbs() {
+  for (const o of orbs) {
+    if (o.taken) continue;
+    const x = o.x - camX;
+    if (x < -20 || x > W + 20) continue;
+    const y = o.y + Math.sin(o.phase) * 5;
+    const pulse = 0.7 + 0.3 * Math.sin(o.phase * 2);
+    // Glow
+    ctx.fillStyle = "rgba(255,45,120," + (0.25 * pulse).toFixed(3) + ")";
+    ctx.beginPath(); ctx.arc(x, y, o.r * 2.4, 0, 6.28); ctx.fill();
+    // Core
+    ctx.fillStyle = CONFIG.PINK;
+    ctx.beginPath(); ctx.arc(x, y, o.r, 0, 6.28); ctx.fill();
+    ctx.fillStyle = CONFIG.WHITE;
+    ctx.beginPath(); ctx.arc(x - 2, y - 2, o.r * 0.35, 0, 6.28); ctx.fill();
+  }
+}
+function drawEnemies() {
+  for (const e of enemies) {
+    const x = e.x - camX;
+    if (x + e.w < -20 || x > W + 20) continue;
+    const squish = e.dead ? Math.max(0.15, 1 - e.squash * 3) : 1;
+    const h = e.h * squish;
+    const y = e.y + e.h - h;
+    // Body: a grumpy little envelope
+    ctx.fillStyle = e.dead ? "rgba(255,45,120,0.35)" : "#1c1c30";
+    roundRect(x, y, e.w, h, 5); ctx.fill();
+    ctx.strokeStyle = CONFIG.PINK; ctx.lineWidth = 2;
+    roundRect(x, y, e.w, h, 5); ctx.stroke();
+    if (!e.dead) {
+      // Envelope flap
+      ctx.strokeStyle = "rgba(255,45,120,0.8)";
+      ctx.beginPath();
+      ctx.moveTo(x + 2, y + 3);
+      ctx.lineTo(x + e.w / 2, y + h * 0.55);
+      ctx.lineTo(x + e.w - 2, y + 3);
+      ctx.stroke();
+      // Angry eyes
+      ctx.fillStyle = CONFIG.WHITE;
+      const look = e.dir * 2;
+      ctx.fillRect(x + 7 + look, y + h * 0.6, 4, 4);
+      ctx.fillRect(x + e.w - 11 + look, y + h * 0.6, 4, 4);
+      // Little feet shuffle
+      const step = Math.sin(elapsed * 16) * 2;
+      ctx.fillStyle = CONFIG.PINK;
+      ctx.fillRect(x + 5 + step, e.y + e.h - 2, 6, 3);
+      ctx.fillRect(x + e.w - 11 - step, e.y + e.h - 2, 6, 3);
+    }
+  }
+}
+function drawPlayer() {
+  const p = player;
+  const x = p.rel, y = p.y;
+  // Blink while invincible
+  if (p.inv > 0 && Math.floor(p.inv * 12) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(x + p.w / 2, y + p.h / 2);
+
+  // Scarf trailing in the wind (the brand pink)
+  ctx.strokeStyle = CONFIG.PINK;
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-2, -8);
+  const wave = Math.sin(elapsed * 12) * 3;
+  ctx.quadraticCurveTo(-14, -6 + wave, -24, -2 - wave);
+  ctx.stroke();
+
+  // Body
+  ctx.fillStyle = CONFIG.WHITE;
+  roundRect(-p.w / 2, -p.h / 2, p.w, p.h - 8, 6); ctx.fill();
+  // Hood
+  ctx.fillStyle = CONFIG.PINK;
+  roundRect(-p.w / 2, -p.h / 2, p.w, 10, 5); ctx.fill();
+  // Face visor
+  ctx.fillStyle = "#0a0a0f";
+  ctx.fillRect(p.w / 2 - 12, -p.h / 2 + 11, 9, 6);
+  // Legs (running animation)
+  ctx.fillStyle = CONFIG.WHITE;
+  if (p.onGround || p.onCloud) {
+    const a = Math.sin(p.runPhase) * 6;
+    ctx.fillRect(-8, p.h / 2 - 8, 7, 8 + a * 0.5);
+    ctx.fillRect(2, p.h / 2 - 8, 7, 8 - a * 0.5);
+  } else {
+    ctx.fillRect(-9, p.h / 2 - 10, 7, 9);
+    ctx.fillRect(3, p.h / 2 - 6, 7, 7);
+  }
+  ctx.restore();
+}
+function drawParticles() {
+  for (const pt of particles) {
+    const a = 1 - pt.t / pt.life;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x - camX, pt.y, pt.r, 0, 6.28); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawConfetti() {
+  for (const c of confetti) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.globalAlpha = Math.min(1, c.life);
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* --- UI --- */
+function drawHUD() {
+  // Score + goal
+  ctx.textAlign = "left";
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.font = "900 13px Arial, sans-serif";
+  ctx.fillText("ATTENDEES SECURED", 20, 30);
+  ctx.font = "900 30px Arial, sans-serif";
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.fillText(String(score), 20, 62);
+  const scoreW = ctx.measureText(String(score)).width;
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.font = "900 16px Arial, sans-serif";
+  ctx.fillText("/ " + CONFIG.GOAL, 28 + scoreW, 62);
+
+  // Progress bar
+  const bw = 240;
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  roundRect(20, 72, bw, 8, 4); ctx.fill();
+  ctx.fillStyle = CONFIG.PINK;
+  const pw = Math.max(8, bw * Math.min(1, score / CONFIG.GOAL));
+  roundRect(20, 72, pw, 8, 4); ctx.fill();
+  // Milestone ticks
+  ctx.fillStyle = "rgba(10,10,15,0.9)";
+  for (let m = CONFIG.MILESTONE_STEP; m < CONFIG.GOAL; m += CONFIG.MILESTONE_STEP) {
+    ctx.fillRect(20 + bw * (m / CONFIG.GOAL) - 1, 72, 2, 8);
+  }
+
+  // Lives (hearts)
+  for (let i = 0; i < CONFIG.LIVES; i++) {
+    drawHeart(W - 36 - i * 30, 32, 10, i < lives ? CONFIG.PINK : "rgba(255,255,255,0.15)");
+  }
+
+  // Streak
+  if (streakShown > 1) {
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = "900 13px Arial, sans-serif";
+    ctx.fillText("DAY " + streakShown + " 🔥", W - 20, 62);
+  }
+}
+function drawHeart(cx, cy, s, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 0.6);
+  ctx.bezierCurveTo(cx - s * 1.4, cy - s * 0.5, cx - s * 0.6, cy - s * 1.3, cx, cy - s * 0.4);
+  ctx.bezierCurveTo(cx + s * 0.6, cy - s * 1.3, cx + s * 1.4, cy - s * 0.5, cx, cy + s * 0.6);
+  ctx.fill();
+}
+function drawMilestoneBanner() {
+  const t = 1.6 - milestoneTimer; // 0 → 1.6
+  // Slide in fast, hold, slide out
+  let ox;
+  if (t < 0.25) ox = (1 - t / 0.25) * -W;
+  else if (milestoneTimer < 0.3) ox = (1 - milestoneTimer / 0.3) * W;
+  else ox = 0;
+
+  ctx.save();
+  ctx.translate(ox, 0);
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.fillRect(0, H * 0.36, W, 74);
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.textAlign = "center";
+  ctx.font = "900 40px Arial, sans-serif";
+  ctx.fillText(milestoneValue + " SECURED!", W / 2, H * 0.36 + 50);
+  ctx.restore();
+}
+
+/* --- Screens --- */
+function drawTitle(y) {
+  ctx.textAlign = "center";
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.font = "900 52px Arial, sans-serif";
+  ctx.fillText("ARCTIC RUN", W / 2, y);
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.font = "900 30px Arial, sans-serif";
+  ctx.fillText("NORDEEP 3000", W / 2, y + 40);
+}
+function pressPrompt(text, y) {
+  const a = 0.55 + 0.45 * Math.sin(elapsed * 4);
+  ctx.fillStyle = "rgba(255,255,255," + a.toFixed(2) + ")";
+  ctx.font = "900 18px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(text, W / 2, y);
+}
+function drawStartScreen() {
+  ctx.fillStyle = "rgba(10,10,15,0.55)";
+  ctx.fillRect(0, 0, W, H);
+  drawTitle(H * 0.32);
+
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.font = "700 15px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Run north. Grab attendee orbs. Fill the event: " + CONFIG.GOAL + " seats.", W / 2, H * 0.32 + 82);
+  ctx.fillText("← → / A D move · SPACE jump (twice = double jump) · stomp inbox monsters", W / 2, H * 0.32 + 106);
+
+  // Best + streak
+  ctx.font = "900 20px Arial, sans-serif";
+  ctx.fillStyle = CONFIG.PINK;
+  let statLine = "BEST: " + bestShown;
+  const st = currentStreak();
+  if (st > 0) statLine += "   ·   DAY " + st + " 🔥";
+  ctx.fillText(statLine, W / 2, H * 0.32 + 150);
+
+  pressPrompt(("ontouchstart" in window) ? "TAP TO START" : "PRESS SPACE TO START", H * 0.78);
+}
+function drawWinScreen() {
+  ctx.fillStyle = "rgba(10,10,15,0.6)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.font = "900 46px Arial, sans-serif";
+  ctx.fillText("NORDEEP IS FULL.", W / 2, H * 0.34);
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.font = "900 30px Arial, sans-serif";
+  ctx.fillText("See you in Espoo.", W / 2, H * 0.34 + 44);
+
+  ctx.font = "900 18px Arial, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  const ws = winStats || { score, streak: streakShown, best: bestShown };
+  ctx.fillText("FINAL: " + ws.score + "   ·   BEST: " + ws.best + (ws.streak > 0 ? "   ·   DAY " + ws.streak + " 🔥" : ""), W / 2, H * 0.34 + 92);
+
+  pressPrompt(("ontouchstart" in window) ? "TAP TO PLAY AGAIN" : "PRESS SPACE TO PLAY AGAIN", H * 0.75);
+}
+function drawGameOverScreen() {
+  ctx.fillStyle = "rgba(10,10,15,0.6)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = CONFIG.WHITE;
+  ctx.font = "900 42px Arial, sans-serif";
+  ctx.fillText("THE ICE GOT YOU", W / 2, H * 0.36);
+  ctx.fillStyle = CONFIG.PINK;
+  ctx.font = "900 22px Arial, sans-serif";
+  ctx.fillText(score + " attendees secured", W / 2, H * 0.36 + 40);
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.font = "900 16px Arial, sans-serif";
+  ctx.fillText("BEST: " + bestShown, W / 2, H * 0.36 + 72);
+
+  pressPrompt(("ontouchstart" in window) ? "TAP TO PLAY AGAIN" : "PRESS SPACE TO PLAY AGAIN", H * 0.72);
+}
+
+/* --- Helpers --- */
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ============================ Game loop ============================ */
+// Initialize world so the start screen has a scene behind it
+resetRunSceneOnly();
+function resetRunSceneOnly() {
+  // A lightweight scene for the start screen (no streak bump)
+  score = 0; lives = CONFIG.LIVES; camX = 0; elapsed = 0;
+  grounds = [{ x0: -200, x1: W + 400 }];
+  orbs = []; enemies = []; clouds = []; particles = []; confetti = [];
+  genX = W + 400; nextMilestone = CONFIG.MILESTONE_STEP;
+  player = { rel: 190, y: GROUND_Y - 40, w: 26, h: 40, vy: 0, jumps: 0, onGround: true, onCloud: null, inv: 0, runPhase: 0 };
+}
+
+let lastT = performance.now();
+function frame(now) {
+  // Clamp dt so a background tab doesn't teleport the player
+  const dt = Math.min(0.033, (now - lastT) / 1000);
+  lastT = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
