@@ -11,9 +11,28 @@ grab glowing attendee orbs, stomp inbox monsters, and fill the event —
 - **M** — mute · **N** — change your runner name
 - On touch devices, on-screen buttons appear automatically.
 
-On your first run you enter your name — every finished run lands on the
-**🏆 Hall of Fame** (top scores with names, crowns 👑 for full-3000 wins),
-shown on the start, win, and game-over screens.
+The game opens with a name popup — every finished run lands on the
+leaderboard (top scores with names, crowns 👑 for full-3000 wins), shown
+on the start, win, and game-over screens.
+
+## Shared global leaderboard (see everyone's scores)
+
+Out of the box the leaderboard is per-device. To make it **global** —
+every player sees everyone's best scores — the repo ships a tiny
+serverless function (`api/scores.js`). Enable it in ~2 minutes:
+
+1. In your Vercel project, open **Storage** (or Marketplace) and add
+   **Upstash for Redis** — the free tier is plenty.
+2. Connect it to this project; Vercel sets the Redis env vars
+   automatically (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or
+   `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
+3. Redeploy.
+
+The board panel switches from "🏆 HALL OF FAME · this device" to
+"🌍 GLOBAL TOP · all players" on its own once the backend responds.
+Only each player's best score is kept (one row per name). If the
+backend is missing or down, the game quietly falls back to the
+per-device board — nothing breaks.
 
 Jump on inbox monsters to squash them (+50). Orbs are +10. Milestone
 banner every 750. Three lives, gentle difficulty — a run takes 2–4 minutes.
@@ -24,7 +43,8 @@ alive.
 
 ## Deploy
 
-Everything is a single `index.html` — no build step, no dependencies.
+A single `index.html` plus an optional `api/scores.js` serverless
+function — no build step, no dependencies.
 
 **Vercel:** import this repo (or `vercel deploy` from the folder). Zero
 config needed; it's served as a static site.

@@ -238,7 +238,32 @@ function recordRun(finalScore, won) {
   board.push({ n: getName() || "RUNNER", s: finalScore, d: todayStr(), w: !!won });
   board.sort((a, b) => b.s - a.s);
   localStorage.setItem(LS_BOARD, JSON.stringify(board.slice(0, 8)));
+  postGlobalScore(finalScore);
 }
+
+/* ---- Global leaderboard (shared across all players) ----
+   Served by /api/scores when the site runs on Vercel with the Upstash
+   Redis integration. If the endpoint is missing (local file, backend
+   not set up), globalBoard stays null and the per-device board shows. */
+let globalBoard = null; // null = unavailable · [] = available, no runs yet
+async function fetchGlobalBoard() {
+  try {
+    const r = await fetch("/api/scores", { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (Array.isArray(j.top)) globalBoard = j.top;
+  } catch (e) { /* offline / no backend: keep device board */ }
+}
+function postGlobalScore(finalScore) {
+  try {
+    fetch("/api/scores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: getName() || "RUNNER", score: finalScore }),
+    }).then(() => fetchGlobalBoard()).catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+fetchGlobalBoard();
 
 /* ============================ Tiny sounds ============================ */
 // Minimal WebAudio blips, created lazily on first input. Press M to mute.
@@ -1094,26 +1119,38 @@ function startPill(label, y) {
   ctx.fillText(label, W / 2, y + 30);
   ctx.restore();
 }
-// Hall of Fame: local top runs, with names
+// Leaderboard: global top (all players) when the backend answers,
+// otherwise this device's Hall of Fame
 function drawBoardPanel(x, y, w, h) {
   panel(x, y, w, h, 14);
+  const isGlobal = globalBoard !== null;
   ctx.textAlign = "left";
   ctx.fillStyle = CONFIG.PINK;
   ctx.font = "900 13px Arial, sans-serif";
-  ctx.fillText("🏆 HALL OF FAME", x + 20, y + 28);
-  const board = loadBoard().slice(0, 5);
+  ctx.fillText(isGlobal ? "🌍 GLOBAL TOP" : "🏆 HALL OF FAME", x + 20, y + 28);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.font = "700 10px Arial, sans-serif";
+  ctx.fillText(isGlobal ? "ALL PLAYERS" : "THIS DEVICE", x + w - 20, y + 28);
+
+  const board = isGlobal
+    ? globalBoard.slice(0, 5).map(e => ({ n: e.n, s: e.s, w: e.s >= CONFIG.GOAL }))
+    : loadBoard().slice(0, 5);
   if (!board.length) {
+    ctx.textAlign = "left";
     ctx.fillStyle = "rgba(255,255,255,0.5)";
     ctx.font = "700 13px Arial, sans-serif";
     ctx.fillText("No runs yet — be the first!", x + 20, y + 62);
     return;
   }
+  const me = getName();
   const medals = ["🥇", "🥈", "🥉"];
   board.forEach((e, i) => {
     const ry = y + 56 + i * 22;
+    const mine = me && e.n === me;
     ctx.textAlign = "left";
     ctx.font = "900 13px Arial, sans-serif";
-    ctx.fillStyle = i === 0 ? CONFIG.WHITE : "rgba(255,255,255,0.78)";
+    ctx.fillStyle = mine ? CONFIG.PINK : (i === 0 ? CONFIG.WHITE : "rgba(255,255,255,0.78)");
     ctx.fillText((medals[i] || " " + (i + 1) + ". ") + " " + e.n + (e.w ? " 👑" : ""), x + 18, ry);
     ctx.textAlign = "right";
     ctx.fillStyle = CONFIG.PINK;
@@ -1331,6 +1368,7 @@ function frame(now) {
   if (state !== lastUIState) { // "✎ NAME" button only outside of runs
     lastUIState = state;
     editBtn.style.display = state === "playing" ? "none" : "block";
+    if (state !== "playing") fetchGlobalBoard(); // fresh scores on menus
   }
   requestAnimationFrame(frame);
 }
