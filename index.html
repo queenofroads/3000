@@ -382,6 +382,9 @@ let player, grounds, orbs, enemies, clouds, particles, confetti;
 let genX;                 // world x up to which the level is generated
 let nextMilestone;        // next score threshold for a milestone moment
 let milestoneTimer = 0;   // banner/flash countdown
+let endCooldown = 0;      // brief input lockout on win/gameover screens
+let heartFx = null;       // { i, t } — heart-loss pop animation
+let hitFlash = 0;         // red damage flash
 let milestoneValue = 0;   // which milestone we're celebrating
 let flashAlpha = 0;
 let shakeT = 0;
@@ -554,6 +557,7 @@ function orbArcOverGap(gapStart, gapW) {
 function advanceState() {
   if (state !== "start" && state !== "win" && state !== "gameover") return;
   if (nameUIVisible) return;
+  if (endCooldown > 0) return; // let the end screen breathe before restarting
   if (!getName()) { showNameUI(); return; } // first run: sign the Hall of Fame
   resetRun();
   state = "playing";
@@ -566,9 +570,15 @@ function loseLife(reason) {
     lives--;
     sfx.hit();
     shakeT = 0.35;
+    hitFlash = 0.45;
     burst(camX + player.rel, player.y + player.h / 2, CONFIG.PINK, 14);
+    // Pop + shatter the heart that was just lost (hearts sit top-right).
+    // Bias the fragments forward so they stay put on screen as the world scrolls.
+    heartFx = { i: lives, t: 0 };
+    burst(camX + (W - 36 - lives * 30), 34, CONFIG.PINK, 10, scrollSpeed);
     if (lives <= 0) {
       state = "gameover";
+      endCooldown = 1.1; // ignore mashed jump presses for a beat
       if (score > bestShown) { saveBest(score); bestShown = score; }
       recordRun(score, false);
       return;
@@ -592,6 +602,7 @@ function loseLife(reason) {
 
 function winGame() {
   state = "win";
+  endCooldown = 1.1; // ignore mashed jump presses for a beat
   sfx.win();
   if (score > bestShown) { saveBest(score); bestShown = score; }
   recordRun(score, true);
@@ -626,10 +637,10 @@ function addScore(n, x, y) {
 }
 
 /* =========================== Particles =========================== */
-function burst(x, y, color, n) {
+function burst(x, y, color, n, vxBias) {
   for (let i = 0; i < n; i++) {
     particles.push({
-      x, y, vx: rand(-180, 180), vy: rand(-260, 40),
+      x, y, vx: rand(-180, 180) + (vxBias || 0), vy: rand(-260, 40),
       r: rand(2, 5), color, life: rand(0.3, 0.7), t: 0,
     });
   }
@@ -643,6 +654,9 @@ function overGround(px, w) {
 
 function update(dt) {
   elapsed += dt;
+  if (endCooldown > 0) endCooldown -= dt;
+  if (hitFlash > 0) hitFlash = Math.max(0, hitFlash - dt * 1.6);
+  if (heartFx) { heartFx.t += dt; if (heartFx.t > 0.8) heartFx = null; }
   if (state !== "playing") {
     // Menus stay still — only ambient animation (stars, aurora, confetti)
     updateConfetti(dt);
@@ -818,6 +832,11 @@ function draw() {
   // Pink milestone flash
   if (flashAlpha > 0) {
     ctx.fillStyle = "rgba(255,45,120," + flashAlpha.toFixed(3) + ")";
+    ctx.fillRect(0, 0, W, H);
+  }
+  // Red damage flash on a lost life
+  if (hitFlash > 0) {
+    ctx.fillStyle = "rgba(255,20,45," + (hitFlash * 0.45).toFixed(3) + ")";
     ctx.fillRect(0, 0, W, H);
   }
 
@@ -1214,9 +1233,10 @@ function drawChips(chips, cx, y) {
     x += widths[i] + gap;
   }
 }
-// Pulsing pink action pill
+// Pulsing pink action pill; fades in while the end-screen lockout runs
 function startPill(label, y) {
-  const pa = 0.80 + 0.20 * Math.sin(elapsed * 3.4);
+  const lockK = endCooldown > 0 ? Math.max(0.12, 1 - endCooldown / 1.1) : 1;
+  const pa = (0.80 + 0.20 * Math.sin(elapsed * 3.4)) * lockK;
   const px = W / 2 - 175, pw = 350, ph = 46;
   ctx.save();
   ctx.globalAlpha = pa;
@@ -1312,7 +1332,24 @@ function drawHUD() {
 
   // Lives (hearts) + runner name + streak, top right
   for (let i = 0; i < CONFIG.LIVES; i++) {
-    drawHeart(W - 36 - i * 30, 32, 10, i < lives ? CONFIG.PINK : "rgba(255,255,255,0.15)");
+    const hx = W - 36 - i * 30, hy = 32;
+    if (heartFx && heartFx.i === i) {
+      // The heart we just lost: empty slot revealed underneath...
+      drawHeart(hx, hy, 10, "rgba(255,255,255,0.15)");
+      // ...while the lost heart flashes white, swells, and fades out
+      const t = heartFx.t;
+      const k = Math.max(0, 1 - t / 0.8);
+      ctx.save();
+      ctx.globalAlpha = k;
+      ctx.shadowColor = CONFIG.PINK;
+      ctx.shadowBlur = 22 * k;
+      drawHeart(hx, hy - t * 14, 10 * (1 + t * 1.6), t < 0.12 ? CONFIG.WHITE : CONFIG.PINK);
+      ctx.restore();
+      continue;
+    }
+    // Remaining hearts flinch (tremble) briefly after a hit
+    const jx = heartFx && i < lives ? rand(-1.4, 1.4) * Math.max(0, 1 - heartFx.t) : 0;
+    drawHeart(hx + jx, hy, 10, i < lives ? CONFIG.PINK : "rgba(255,255,255,0.15)");
   }
   ctx.textAlign = "right";
   ctx.fillStyle = "rgba(255,255,255,0.85)";
